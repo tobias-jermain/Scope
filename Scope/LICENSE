@@ -1,0 +1,80 @@
+# Scope Community License 1.0
+
+Copyright (c) 2026  Tobias Jermain
+
+## 1. Grant of Rights
+
+Permission is granted to any individual or organization to view, download, and modify the source code of the software known as **Scope** for personal, educational, research, or internal evaluation purposes, subject to the conditions below.
+
+## 2. Modification
+
+You may modify the source code for your own use.
+
+Modified versions may not be published, distributed, shared, transferred, or made available to any other person or organization.
+
+## 3. No Redistribution
+
+Redistribution of the original software or any modified version is strictly prohibited.
+
+This includes, but is not limited to:
+
+* GitHub forks intended for public use
+* Binary distributions
+* Source code mirrors
+* Package repositories
+* Docker images
+* Software bundles
+* Cloud-hosted copies
+* USB or physical media distribution
+
+Only the original copyright holder may distribute Scope.
+
+## 4. Branding
+
+The names **Scope**, its logo, artwork, branding, documentation identity, and project identity are protected.
+
+No person may:
+
+* rename the project while representing it as Scope;
+* remove or alter Scope branding in distributed materials;
+* use the Scope name or logo to imply endorsement;
+* create derivative branding intended to imitate or replace Scope.
+
+Permission to use Scope branding may only be granted in writing by the copyright holder.
+
+## 5. Commercial Use
+
+Commercial use is prohibited.
+
+Commercial use includes, but is not limited to:
+
+* selling the software;
+* charging for access to it;
+* bundling it with paid products or services;
+* offering it as a hosted or managed service;
+* incorporating it into commercial software;
+* using it in products or services offered for profit.
+
+Separate written permission from the copyright holder is required for any commercial use.
+
+## 6. Copyright
+
+All copyright, ownership, and intellectual property rights remain with the copyright holder.
+
+This license grants permission to use and modify the software only as expressly stated.
+
+## 7. No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+
+## 8. Termination
+
+Any violation of this license immediately terminates all rights granted under it.
+
+Upon termination, all copies and modifications of the software must be destroyed unless otherwise permitted in writing by the copyright holder.
+
+## 9. Entire Agreement
+
+This license constitutes the entire agreement governing use of the software and supersedes any prior permissions unless granted in writing by the copyright holder.
