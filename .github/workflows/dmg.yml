@@ -1,0 +1,88 @@
+name: Build DMG
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-dmg:
+    name: Build & package Scope.app
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest available Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
+
+      - name: Build Release
+        run: |
+          xcodebuild \
+            -project Scope.xcodeproj \
+            -scheme Scope \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Locate built app
+        id: app
+        run: |
+          APP_PATH=$(find build/Build/Products/Release -maxdepth 1 -name "*.app" | head -n1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Could not find built .app bundle" >&2
+            exit 1
+          fi
+          echo "path=$APP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Build a multi-resolution volume icon
+        run: |
+          mkdir -p build/VolumeIcon.iconset
+          cp Scope/Assets.xcassets/AppIcon.appiconset/icon_*.png build/VolumeIcon.iconset/
+          iconutil -c icns build/VolumeIcon.iconset -o build/VolumeIcon.icns
+
+      - name: Stage DMG contents
+        run: |
+          rm -rf build/dmg-src
+          mkdir -p build/dmg-src
+          cp -R "${{ steps.app.outputs.path }}" build/dmg-src/
+
+      - name: Create DMG
+        run: |
+          mkdir -p dist
+          rm -f dist/Scope.dmg
+          create-dmg \
+            --volname "Scope" \
+            --volicon "build/VolumeIcon.icns" \
+            --background "dmg-assets/background.png" \
+            --window-pos 200 120 \
+            --window-size 660 400 \
+            --text-size 12 \
+            --icon-size 128 \
+            --icon "Scope.app" 180 170 \
+            --hide-extension "Scope.app" \
+            --app-drop-link 480 170 \
+            --no-internet-enable \
+            "dist/Scope.dmg" \
+            "build/dmg-src"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scope-dmg
+          path: dist/Scope.dmg
+
+      - name: Attach DMG to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Scope.dmg
+          draft: true
