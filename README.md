@@ -3,7 +3,7 @@
 Native macOS app for tracking ADS-B aircraft from any remote dump1090 instance. Built in SwiftUI with SF design. Free.
 
 
-![macOS 12+](https://img.shields.io/badge/macOS-12%2B-silver) ![SwiftUI](https://img.shields.io/badge/SwiftUI-native-blue) ![License](https://img.shields.io/badge/License-MIT-green)
+![macOS 26+](https://img.shields.io/badge/macOS-12%2B-silver) ![SwiftUI](https://img.shields.io/badge/SwiftUI-native-blue) ![License](https://img.shields.io/badge/License-Custom-green)
 
 ## What It Does
 
