@@ -4,6 +4,8 @@ private let scopePurple = Color(red: 0.545, green: 0.361, blue: 0.965)
 
 struct ConnectionView: View {
     @ObservedObject var viewModel: AircraftViewModel
+    let onboardingCompleted: Bool
+    @State private var receiverLocationMode: ReceiverLocationMode = .remote
     @State private var dataSourceMode: DataSourceMode = .beastBinary
     @State private var beastHost: String = ""
     @State private var beastPort: String = "30002"
@@ -13,6 +15,8 @@ struct ConnectionView: View {
     private var isConnecting: Bool { viewModel.connectionState == .connecting }
 
     private var canConnect: Bool {
+        guard receiverLocationMode == .remote else { return false }
+
         switch dataSourceMode {
         case .beastBinary:
             return !beastHost.trimmingCharacters(in: .whitespaces).isEmpty && UInt16(beastPort) != nil
@@ -23,16 +27,16 @@ struct ConnectionView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.55).ignoresSafeArea()
+            Color.black.opacity(0.42).ignoresSafeArea()
 
             VStack(spacing: 24) {
                 VStack(spacing: 8) {
                     Image(systemName: "dot.radiowaves.left.and.right")
-                        .font(.system(size: 44))
+                        .font(.system(size: 44, weight: .semibold))
                         .foregroundStyle(scopePurple)
+                        .symbolRenderingMode(.hierarchical)
                     Text("Scope")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
+                        .font(.system(.largeTitle, weight: .bold))
                     Text("ADS-B Flight Tracker")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -45,8 +49,12 @@ struct ConnectionView: View {
                 }
             }
             .padding(40)
-            .background(.ultraThinMaterial)
-            .cornerRadius(20)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(.white.opacity(0.2), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.28), radius: 28, y: 12)
         }
         .onAppear(perform: loadConfig)
         .task(id: isConnecting) {
@@ -134,7 +142,7 @@ struct ConnectionView: View {
         case .beastBinary:
             return "Check that dump1090 is listening on \(viewModel.config.beastHost):\(viewModel.config.beastPort)"
         case .httpJSON:
-            return "Taking longer than expected — HTTP timeout is 5s per attempt"
+            return "Taking longer than expected - HTTP timeout is 5s per attempt"
         }
     }
 
@@ -142,22 +150,18 @@ struct ConnectionView: View {
 
     private var inputBody: some View {
         VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("Mode", selection: $dataSourceMode) {
-                    ForEach(DataSourceMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Connection")
+                    .font(.headline)
+
+                connectionLocationPicker
+
+                if receiverLocationMode == .remote {
+                    remoteSourceControls
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 360)
-
-                Text(dataSourceMode.detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 360, alignment: .leading)
-
-                sourceFields
             }
+            .animation(.easeInOut(duration: 0.2), value: receiverLocationMode)
 
             Button("Connect", action: attemptConnect)
                 .buttonStyle(.borderedProminent)
@@ -180,6 +184,81 @@ struct ConnectionView: View {
                 }
                 .padding(.top, -4)
             }
+        }
+    }
+
+    private var connectionLocationPicker: some View {
+        HStack(spacing: 8) {
+            connectionLocationButton(
+                mode: .local,
+                systemImage: "desktopcomputer",
+                isEnabled: false
+            )
+
+            connectionLocationButton(
+                mode: .remote,
+                systemImage: "network",
+                isEnabled: true
+            )
+        }
+        .frame(width: 360)
+    }
+
+    private func connectionLocationButton(
+        mode: ReceiverLocationMode,
+        systemImage: String,
+        isEnabled: Bool
+    ) -> some View {
+        Button {
+            receiverLocationMode = mode
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                Text(mode.title)
+                    .fontWeight(.medium)
+                Spacer(minLength: 0)
+                if !isEnabled {
+                    Image(systemName: "lock.fill")
+                        .font(.caption2)
+                }
+            }
+            .font(.caption)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity)
+            .background(locationBackground(for: mode), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(receiverLocationMode == mode ? scopePurple.opacity(0.8) : .white.opacity(0.14), lineWidth: 1)
+            }
+            .opacity(isEnabled ? 1 : 0.45)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .help(isEnabled ? mode.detail : "Local receiver support is coming later")
+    }
+
+    private func locationBackground(for mode: ReceiverLocationMode) -> Color {
+        receiverLocationMode == mode ? scopePurple.opacity(0.16) : Color.secondary.opacity(0.08)
+    }
+
+    private var remoteSourceControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Mode", selection: $dataSourceMode) {
+                ForEach(DataSourceMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 360)
+            .help("Choose Remote Receiver Protocol")
+
+            Text(dataSourceMode.detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 360, alignment: .leading)
+
+            sourceFields
         }
     }
 
@@ -216,6 +295,7 @@ struct ConnectionView: View {
     }
 
     private func loadConfig() {
+        receiverLocationMode = viewModel.config.receiverLocationMode
         dataSourceMode = viewModel.config.dataSourceMode
         beastHost = viewModel.config.beastHost
         beastPort = String(viewModel.config.beastPort)
@@ -224,6 +304,7 @@ struct ConnectionView: View {
 
     private func attemptConnect() {
         guard canConnect else { return }
+        viewModel.config.receiverLocationMode = receiverLocationMode
         viewModel.config.dataSourceMode = dataSourceMode
 
         switch dataSourceMode {

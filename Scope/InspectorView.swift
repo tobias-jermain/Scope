@@ -50,6 +50,74 @@ struct TelemetryCell: View {
     }
 }
 
+// Always shows 130 px black slot; fades in actual photo when available.
+// hex-image-thumb returns a plain-text URL to the real image — requires two fetches.
+private struct AircraftPhotoView: View {
+    let icao: String
+    @State private var nsImage: NSImage?
+
+    var body: some View {
+        ZStack {
+            Color.black
+
+            if let img = nsImage {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .transition(.opacity.animation(.easeIn(duration: 0.2)))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 130)
+        .clipped()
+        .task(id: icao) {
+            nsImage = nil
+            // Step 1: resolve the image URL
+            guard let resolverURL = URL(string: "https://hexdb.io/hex-image-thumb?hex=\(icao)"),
+                  let (urlData, _) = try? await URLSession.shared.data(from: resolverURL),
+                  let imageURLString = String(data: urlData, encoding: .utf8)?
+                      .trimmingCharacters(in: .whitespacesAndNewlines),
+                  imageURLString.hasPrefix("https://"),
+                  let imageURL = URL(string: imageURLString) else { return }
+            // Step 2: fetch the actual image
+            guard let (imageData, _) = try? await URLSession.shared.data(from: imageURL),
+                  let loaded = NSImage(data: imageData),
+                  loaded.size.width > 4 else { return }
+            nsImage = loaded
+        }
+    }
+}
+
+// Fetches flight route from hexdb.io and renders "EIDW → EGLL" inline.
+private struct RouteView: View {
+    let callsign: String
+    @State private var route: String?
+
+    private struct HexdbRoute: Codable {
+        let route: String?
+    }
+
+    var body: some View {
+        Group {
+            if let route {
+                InfoRow(
+                    icon: "arrow.triangle.swap",
+                    label: "Route",
+                    value: route.split(separator: "-").joined(separator: " → ")
+                )
+            }
+        }
+        .task(id: callsign) {
+            route = nil
+            guard let url = URL(string: "https://hexdb.io/api/v1/route/icao/\(callsign)") else { return }
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                  let decoded = try? JSONDecoder().decode(HexdbRoute.self, from: data),
+                  let r = decoded.route, !r.isEmpty else { return }
+            route = r
+        }
+    }
+}
+
 struct InspectorView: View {
     let aircraft: Aircraft
     let onClose: () -> Void
@@ -65,6 +133,8 @@ struct InspectorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            AircraftPhotoView(icao: aircraft.id)
+
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
@@ -95,19 +165,24 @@ struct InspectorView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if aircraft.aircraftType != nil || aircraft.airline != nil {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if let type = aircraft.aircraftType {
-                                InfoRow(icon: "airplane", label: "Type", value: type)
-                            }
-                            if let airline = aircraft.airline {
-                                InfoRow(icon: "building.2", label: "Operator", value: airline)
-                            }
+                    // Aircraft identity: route, type, manufacturer, operator
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let callsign = aircraft.callsign {
+                            RouteView(callsign: callsign)
                         }
-                        .padding(10)
-                        .background(Color.secondary.opacity(0.06))
-                        .cornerRadius(8)
+                        if let type = aircraft.aircraftType {
+                            InfoRow(icon: "airplane", label: "Type", value: type)
+                        }
+                        if let manufacturer = aircraft.manufacturer {
+                            InfoRow(icon: "wrench.and.screwdriver", label: "Manufacturer", value: manufacturer)
+                        }
+                        if let airline = aircraft.airline {
+                            InfoRow(icon: "building.2", label: "Operator", value: airline)
+                        }
                     }
+                    .padding(10)
+                    .background(Color.secondary.opacity(0.06))
+                    .cornerRadius(8)
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("TELEMETRY")

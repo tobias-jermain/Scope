@@ -24,6 +24,10 @@
     <string></string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSLocationUsageDescription</key>
+    <string>Scope uses your location to center the map and show the estimated radar coverage ring.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Scope uses your location to center the map and show the estimated radar coverage ring.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
