@@ -5,15 +5,6 @@ Native macOS app for tracking ADS-B aircraft from any remote dump1090 instance. 
 
 ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-silver) ![SwiftUI](https://img.shields.io/badge/SwiftUI-native-blue) ![License](https://img.shields.io/badge/License-Custom-green)
 
-## What It Does
-
-- Connects to a dump1090 instance (your RPi, cloud feeder, anywhere)
-- Displays aircraft on a full-screen map
-- Sidebar with live aircraft list
-- Click any aircraft → inspector overlay shows registration, type, airline, photos
-- Updates every 250ms
-- Works with 1000+ aircraft
-- Dark mode (LHR purple) and light mode
 
 ## Pictures
 
