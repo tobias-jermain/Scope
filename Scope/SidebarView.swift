@@ -10,6 +10,10 @@ struct SidebarRow: View {
     let aircraft: Aircraft
     let isSelected: Bool
 
+    private var isIdentified: Bool {
+        aircraft.callsign != nil
+    }
+
     private var altitudeColor: Color {
         switch aircraft.altitude {
         case ..<5000: return .green
@@ -29,7 +33,9 @@ struct SidebarRow: View {
                 HStack {
                     Text(aircraft.callsign ?? aircraft.id.uppercased())
                         .font(.system(.callout, design: .monospaced))
-                        .fontWeight(.semibold)
+                        .fontWeight(isIdentified ? .semibold : .regular)
+                        .foregroundStyle(isIdentified ? Color.primary : Color.secondary)
+                        .italic(!isIdentified)
                         .lineLimit(1)
                     Spacer()
                     Text(aircraft.altitude == 0 ? "GND" : "\(aircraft.altitude.formatted())ft")
@@ -135,14 +141,16 @@ struct SidebarView: View {
             } else {
                 List {
                     ForEach(filtered) { ac in
-                        SidebarRow(aircraft: ac, isSelected: viewModel.selectedAircraft?.id == ac.id)
-                            .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
-                            .listRowSeparator(.hidden)
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    viewModel.selectedAircraft = ac
-                                }
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                viewModel.selectedAircraft = ac
                             }
+                        } label: {
+                            SidebarRow(aircraft: ac, isSelected: viewModel.selectedAircraft?.id == ac.id)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
+                        .listRowSeparator(.hidden)
                     }
                 }
                 .listStyle(.plain)

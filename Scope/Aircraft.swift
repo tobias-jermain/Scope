@@ -72,6 +72,7 @@ struct Aircraft: Identifiable, Equatable, Hashable {
     let registration: String?
     let aircraftType: String?
     let airline: String?
+    let manufacturer: String?
     let photoUrl: String?
     let lastSeen: Date
 
@@ -92,6 +93,7 @@ struct Aircraft: Identifiable, Equatable, Hashable {
         self.registration = json.r
         self.aircraftType = json.t
         self.airline = nil
+        self.manufacturer = nil
         self.photoUrl = nil
         self.lastSeen = Date()
     }
@@ -110,6 +112,7 @@ struct Aircraft: Identifiable, Equatable, Hashable {
             registration: metadata.registration ?? registration,
             aircraftType: metadata.aircraftType ?? aircraftType,
             airline: metadata.airline ?? airline,
+            manufacturer: metadata.manufacturer ?? manufacturer,
             photoUrl: metadata.photoUrl ?? photoUrl,
             lastSeen: lastSeen
         )
@@ -118,7 +121,8 @@ struct Aircraft: Identifiable, Equatable, Hashable {
     init(id: String, callsign: String?, position: CLLocationCoordinate2D,
          altitude: Int, speed: Int, track: Double, verticalRate: Int,
          squawk: String?, category: String?, registration: String?,
-         aircraftType: String?, airline: String?, photoUrl: String?, lastSeen: Date) {
+         aircraftType: String?, airline: String?, manufacturer: String? = nil,
+         photoUrl: String?, lastSeen: Date) {
         self.id = id
         self.callsign = callsign
         self.position = position
@@ -131,6 +135,7 @@ struct Aircraft: Identifiable, Equatable, Hashable {
         self.registration = registration
         self.aircraftType = aircraftType
         self.airline = airline
+        self.manufacturer = manufacturer
         self.photoUrl = photoUrl
         self.lastSeen = lastSeen
     }

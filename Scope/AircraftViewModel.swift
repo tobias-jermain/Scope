@@ -1,6 +1,52 @@
+import CoreLocation
 import Foundation
 import SwiftUI
 import Combine
+
+// MARK: - Location service
+
+private final class LocationService: NSObject, CLLocationManagerDelegate {
+    var onLocation: ((CLLocationCoordinate2D) -> Void)?
+    private let manager = CLLocationManager()
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyKilometer
+    }
+
+    func start() {
+        guard CLLocationManager.locationServicesEnabled() else { return }
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorized, .authorizedAlways, .authorizedWhenInUse:
+            manager.startUpdatingLocation()
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let loc = locations.last else { return }
+        onLocation?(loc.coordinate)
+        // One update is enough — stop to avoid unnecessary battery use
+        manager.stopUpdatingLocation()
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorized, .authorizedAlways, .authorizedWhenInUse:
+            manager.startUpdatingLocation()
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
+}
+
+// MARK: - View model
 
 @MainActor
 class AircraftViewModel: ObservableObject {
@@ -9,17 +55,37 @@ class AircraftViewModel: ObservableObject {
     @Published var selectedAircraft: Aircraft?
     @Published var config: Config
     @Published var pollCount: Int = 0
+    @Published var userLocation: CLLocationCoordinate2D?
 
     private var pollTask: Task<Void, Never>?
     private var beastClient: BeastStreamClient?
     private let metadataService = MetadataService()
+    private let locationService = LocationService()
+
+    // Throttle Beast snapshot updates to avoid rapid redraws causing flicker
+    private var lastAircraftUpdate: Date = .distantPast
 
     init() {
         self.config = Config.load()
+        locationService.onLocation = { [weak self] coord in
+            Task { @MainActor in
+                self?.userLocation = coord
+            }
+        }
+    }
+
+    func startLocationUpdates() {
+        locationService.start()
     }
 
     func connect() {
         disconnect(resetState: false)
+
+        guard config.receiverLocationMode == .remote else {
+            connectionState = .error("Local receiver mode is not available yet")
+            return
+        }
+
         connectionState = .connecting
         pollCount = 0
         config.save()
@@ -77,11 +143,19 @@ class AircraftViewModel: ObservableObject {
         client.onSnapshot = { [weak self] snapshot in
             Task { @MainActor in
                 guard let self, self.beastClient === client else { return }
-                self.aircraft = snapshot.aircraft
                 self.pollCount = snapshot.messageCount
                 self.connectionState = .connected
+
+                // Throttle UI updates to ~10 fps — Beast emits far more frequently
+                let now = Date()
+                guard now.timeIntervalSince(self.lastAircraftUpdate) >= 0.1 else { return }
+                self.lastAircraftUpdate = now
+
+                let enriched = await self.enrichAll(snapshot.aircraft)
+                guard !Task.isCancelled, self.beastClient === client else { return }
+                self.aircraft = enriched
                 if let selected = self.selectedAircraft {
-                    self.selectedAircraft = snapshot.aircraft.first { $0.id == selected.id }
+                    self.selectedAircraft = enriched.first { $0.id == selected.id }
                 }
             }
         }

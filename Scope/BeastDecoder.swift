@@ -30,6 +30,8 @@ final class BeastDecoder {
         var lastSeen: Date
         var evenCPR: CPRFrame?
         var oddCPR: CPRFrame?
+        var evenSurfaceCPR: CPRFrame?
+        var oddSurfaceCPR: CPRFrame?
 
         var aircraft: Aircraft? {
             guard let position else { return nil }
@@ -70,7 +72,6 @@ final class BeastDecoder {
         for byte in data {
             if process(byte) { changed = true }
         }
-
         pruneExpired()
         guard changed else { return nil }
         return BeastSnapshot(
@@ -84,7 +85,6 @@ final class BeastDecoder {
             escaped = false
             return consume(byte)
         }
-
         if byte == 0x1A {
             switch state {
             case .seekingStart:
@@ -94,7 +94,6 @@ final class BeastDecoder {
             }
             return false
         }
-
         return consume(byte)
     }
 
@@ -122,22 +121,67 @@ final class BeastDecoder {
 
     private func payloadLength(for type: UInt8) -> Int? {
         switch Character(UnicodeScalar(type)) {
-        case "1": return 9
-        case "2": return 14
-        case "3": return 21
+        case "1": return 9   // 6-byte MLAT + 1-byte signal + 2-byte Mode-AC
+        case "2": return 14  // 6-byte MLAT + 1-byte signal + 7-byte Mode-S short
+        case "3": return 21  // 6-byte MLAT + 1-byte signal + 14-byte Mode-S long
         default: return nil
         }
     }
 
     private func handleFrame(type: UInt8, payload: [UInt8]) -> Bool {
-        let modeS: ArraySlice<UInt8>
         switch Character(UnicodeScalar(type)) {
-        case "2": modeS = payload.suffix(7)
-        case "3": modeS = payload.suffix(14)
-        default: return false
+        case "2":
+            return decodeModeS7(Array(payload.suffix(7)))
+        case "3":
+            return decodeModeS(Array(payload.suffix(14)))
+        default:
+            return false
         }
-        return decodeModeS(Array(modeS))
     }
+
+    // MARK: - 7-byte Mode S short frames (Beast type "2")
+
+    private func decodeModeS7(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 7 else { return false }
+        let df = bytes[0] >> 3
+        // DF5: Surveillance Identity Reply — contains Mode A squawk
+        guard df == 5 else { return false }
+
+        // Recover ICAO via CRC: AP = ICAO XOR CRC(data), so ICAO = CRC(data) XOR AP
+        let computedCRC = modesCRC(Array(bytes[0...3]))
+        let ap = (UInt32(bytes[4]) << 16) | (UInt32(bytes[5]) << 8) | UInt32(bytes[6])
+        let icao = String(format: "%06x", computedCRC ^ ap)
+
+        // Only update aircraft already seen via ADS-B; avoids CRC false-positives
+        guard tracked[icao] != nil else { return false }
+
+        // Identity is in the upper 13 bits of bytes[2..3]
+        let identBits = (UInt16(bytes[2]) << 5) | UInt16(bytes[3] >> 3)
+        let squawk = decodeSquawk(identBits)
+        guard squawk != "0000" else { return false }
+
+        var current = tracked[icao]!
+        current.squawk = squawk
+        current.lastSeen = Date()
+        tracked[icao] = current
+        return true
+    }
+
+    // Mode S CRC-24 using polynomial 0xFFF409
+    private func modesCRC(_ bytes: [UInt8]) -> UInt32 {
+        let poly: UInt32 = 0xFFF409
+        var crc: UInt32 = 0
+        for byte in bytes {
+            crc ^= UInt32(byte) << 16
+            for _ in 0..<8 {
+                crc <<= 1
+                if crc & 0x1000000 != 0 { crc ^= poly }
+            }
+        }
+        return crc & 0xFFFFFF
+    }
+
+    // MARK: - 14-byte Mode S long frames (Beast type "3")
 
     private func decodeModeS(_ bytes: [UInt8]) -> Bool {
         guard bytes.count == 14 else { return false }
@@ -162,7 +206,9 @@ final class BeastDecoder {
             photoUrl: nil,
             lastSeen: Date(),
             evenCPR: nil,
-            oddCPR: nil
+            oddCPR: nil,
+            evenSurfaceCPR: nil,
+            oddSurfaceCPR: nil
         )
 
         current.lastSeen = Date()
@@ -170,11 +216,35 @@ final class BeastDecoder {
 
         switch typeCode {
         case 1...4:
+            // Aircraft identification: callsign + wake turbulence category (A1–D7)
+            let categoryLetter = ["D", "C", "B", "A"][Int(typeCode) - 1]
+            let categoryDigit = Int(bytes[4] & 0x07)
+            if categoryDigit != 0 {
+                current.category = "\(categoryLetter)\(categoryDigit)"
+                changed = true
+            }
             if let callsign = decodeCallsign(bytes) {
                 current.callsign = callsign
                 changed = true
             }
+
+        case 5...8:
+            // Surface position (aircraft taxiing on ground)
+            let (frame, track) = decodeSurfacePosition(bytes)
+            if frame.isOdd {
+                current.oddSurfaceCPR = frame
+            } else {
+                current.evenSurfaceCPR = frame
+            }
+            if let position = resolveGlobalSurfaceCPR(even: current.evenSurfaceCPR, odd: current.oddSurfaceCPR) {
+                current.position = position
+                current.altitude = 0
+                if let t = track { current.track = t }
+                changed = true
+            }
+
         case 9...18:
+            // Airborne position with barometric altitude
             if let frame = decodeAirbornePosition(bytes) {
                 current.altitude = frame.altitude
                 if frame.isOdd {
@@ -187,10 +257,35 @@ final class BeastDecoder {
                     changed = true
                 }
             }
+
         case 19:
+            // Airborne velocity (ground speed or airspeed + heading)
             if decodeVelocity(bytes, into: &current) {
                 changed = true
             }
+
+        case 20...22:
+            // Airborne position with GNSS altitude — same CPR encoding as TC 9-18
+            if let frame = decodeAirbornePosition(bytes) {
+                if frame.altitude != 0 { current.altitude = frame.altitude }
+                if frame.isOdd {
+                    current.oddCPR = frame
+                } else {
+                    current.evenCPR = frame
+                }
+                if let position = resolveGlobalCPR(even: current.evenCPR, odd: current.oddCPR) {
+                    current.position = position
+                    changed = true
+                }
+            }
+
+        case 28:
+            // Aircraft status — emergency state + embedded Mode A squawk
+            if let squawk = decodeAircraftStatus(bytes) {
+                current.squawk = squawk
+                changed = true
+            }
+
         default:
             break
         }
@@ -199,6 +294,8 @@ final class BeastDecoder {
         messageCount += 1
         return changed
     }
+
+    // MARK: - Message decoders
 
     private func decodeCallsign(_ bytes: [UInt8]) -> String? {
         let charset = Array("#ABCDEFGHIJKLMNOPQRSTUVWXYZ#####_###############0123456789######")
@@ -214,13 +311,28 @@ final class BeastDecoder {
         return callsign.nilIfEmpty
     }
 
+    private func decodeSurfacePosition(_ bytes: [UInt8]) -> (CPRFrame, Double?) {
+        // ME bits: 0-4 TC | 5-11 MOV | 12 status | 13-19 track | 20 T | 21 F | 22-38 lat | 39-55 lon
+        let bits = bits(from: bytes[4...10])
+        let status = bitValue(bits, offset: 12, length: 1)
+        let track: Double? = status != 0
+            ? Double(bitValue(bits, offset: 13, length: 7)) * (360.0 / 128.0)
+            : nil
+        let isOdd = bitValue(bits, offset: 21, length: 1) != 0
+        let encodedLat = Int(bitValue(bits, offset: 22, length: 17))
+        let encodedLon = Int(bitValue(bits, offset: 39, length: 17))
+        let frame = CPRFrame(latitude: encodedLat, longitude: encodedLon, isOdd: isOdd, altitude: 0, timestamp: Date())
+        return (frame, track)
+    }
+
     private func decodeAirbornePosition(_ bytes: [UInt8]) -> CPRFrame? {
-        let altitudeCode = (UInt16(bytes[5] & 0xFE) << 4) | UInt16((bytes[6] & 0xF0) >> 4)
+        // Altitude: bytes[5] = alt bits 1-8, bytes[6] upper nibble = alt bits 9-12
+        // Q bit is bit 4 of the resulting 12-bit code (alt bit 8 of bytes[5])
+        let altitudeCode = (UInt16(bytes[5]) << 4) | UInt16(bytes[6] >> 4)
         let altitude = decodeAltitude(altitudeCode)
         let isOdd = (bytes[6] & 0x04) != 0
         let encodedLatitude = (Int(bytes[6] & 0x03) << 15) | (Int(bytes[7]) << 7) | Int(bytes[8] >> 1)
         let encodedLongitude = (Int(bytes[8] & 0x01) << 16) | (Int(bytes[9]) << 8) | Int(bytes[10])
-
         return CPRFrame(
             latitude: encodedLatitude,
             longitude: encodedLongitude,
@@ -231,27 +343,68 @@ final class BeastDecoder {
     }
 
     private func decodeAltitude(_ code: UInt16) -> Int {
+        // Q bit at position 4 (value 0x10) indicates 25ft-resolution encoding
         let qBit = (code & 0x10) != 0
         guard qBit else { return 0 }
         let n = Int((code & 0x0F) | ((code & 0xFE0) >> 1))
         return n * 25 - 1000
     }
 
+    private func decodeAircraftStatus(_ bytes: [UInt8]) -> String? {
+        // ME bits: 0-4 TC | 5-7 subtype | 8-10 emergency | 11-23 Mode A code (13 bits)
+        let bits = bits(from: bytes[4...10])
+        let subtype = Int(bitValue(bits, offset: 5, length: 3))
+        guard subtype == 1 else { return nil }
+        let code = UInt16(bitValue(bits, offset: 11, length: 13))
+        let squawk = decodeSquawk(code)
+        return squawk == "0000" ? nil : squawk
+    }
+
+    // Convert 13-bit Mode A identity code (C1 A1 C2 B1 D2 B2 D4 A4 C4 A2 B4 D1 SPI)
+    // to a 4-digit squawk string (e.g. "7700").
+    private func decodeSquawk(_ code: UInt16) -> String {
+        let bit: (Int) -> Int = { Int((code >> (12 - $0)) & 1) }
+        let a = (bit(7) << 2) | (bit(9) << 1) | bit(1)  // A4 A2 A1
+        let b = (bit(10) << 2) | (bit(5) << 1) | bit(3) // B4 B2 B1
+        let c = (bit(8) << 2) | (bit(2) << 1) | bit(0)  // C4 C2 C1
+        let d = (bit(6) << 2) | (bit(4) << 1) | bit(11) // D4 D2 D1
+        return String(format: "%d%d%d%d", a, b, c, d)
+    }
+
     private func decodeVelocity(_ bytes: [UInt8], into aircraft: inout TrackedAircraft) -> Bool {
         let bits = bits(from: bytes[4...10])
         let subtype = Int(bitValue(bits, offset: 5, length: 3))
-        guard subtype == 1 || subtype == 2 else { return false }
 
-        let ewDirection = bitValue(bits, offset: 13, length: 1) == 1
-        let ewVelocity = Int(bitValue(bits, offset: 14, length: 10)) - 1
-        let nsDirection = bitValue(bits, offset: 24, length: 1) == 1
-        let nsVelocity = Int(bitValue(bits, offset: 25, length: 10)) - 1
-        guard ewVelocity >= 0, nsVelocity >= 0 else { return false }
+        switch subtype {
+        case 1, 2:
+            // Ground speed: separate EW and NS velocity components
+            let ewDirection = bitValue(bits, offset: 13, length: 1) == 1 // 1 = West
+            let ewVelocity = Int(bitValue(bits, offset: 14, length: 10)) - 1
+            let nsDirection = bitValue(bits, offset: 24, length: 1) == 1 // 1 = South
+            let nsVelocity = Int(bitValue(bits, offset: 25, length: 10)) - 1
+            guard ewVelocity >= 0, nsVelocity >= 0 else { return false }
 
-        let east = Double(ewDirection ? -ewVelocity : ewVelocity)
-        let north = Double(nsDirection ? -nsVelocity : nsVelocity)
-        aircraft.speed = Int(hypot(east, north).rounded())
-        aircraft.track = fmod(atan2(east, north) * 180 / .pi + 360, 360)
+            let east = Double(ewDirection ? -ewVelocity : ewVelocity)
+            let north = Double(nsDirection ? -nsVelocity : nsVelocity)
+            aircraft.speed = Int(hypot(east, north).rounded())
+            aircraft.track = fmod(atan2(east, north) * 180 / .pi + 360, 360)
+
+        case 3, 4:
+            // Airspeed + magnetic/true heading (used when GNSS unavailable)
+            let headingAvailable = bitValue(bits, offset: 13, length: 1) != 0
+            if headingAvailable {
+                let headingRaw = Int(bitValue(bits, offset: 14, length: 10))
+                aircraft.track = Double(headingRaw) * (360.0 / 1024.0)
+            }
+            let airspeed = Int(bitValue(bits, offset: 25, length: 10)) - 1
+            if airspeed >= 0 {
+                // Subtype 4 = supersonic: value is in 4-kt increments
+                aircraft.speed = subtype == 4 ? airspeed * 4 : airspeed
+            }
+
+        default:
+            return false
+        }
 
         let verticalRateSign = bitValue(bits, offset: 36, length: 1) == 1
         let verticalRateValue = Int(bitValue(bits, offset: 37, length: 9)) - 1
@@ -260,6 +413,8 @@ final class BeastDecoder {
         }
         return true
     }
+
+    // MARK: - CPR position resolution
 
     private func resolveGlobalCPR(even: CPRFrame?, odd: CPRFrame?) -> CLLocationCoordinate2D? {
         guard let even, let odd else { return nil }
@@ -280,13 +435,41 @@ final class BeastDecoder {
         let ni = max(useEven ? cprNL(latitude) : cprNL(latitude) - 1, 1)
         let longitudeZone = Double(ni)
         let m = floor(
-            (Double(even.longitude) * (Double(cprNL(latitude)) - 1) - Double(odd.longitude) * Double(cprNL(latitude))) / 131072.0 + 0.5
+            (Double(even.longitude) * Double(cprNL(latitude) - 1) - Double(odd.longitude) * Double(cprNL(latitude))) / 131072.0 + 0.5
         )
         let longitude = 360.0 / longitudeZone * (mod(m, longitudeZone) + Double(useEven ? even.longitude : odd.longitude) / 131072.0)
         let normalizedLongitude = longitude > 180 ? longitude - 360 : longitude
-
         return CLLocationCoordinate2D(latitude: latitude, longitude: normalizedLongitude)
     }
+
+    // Surface CPR uses 1/4 the zone sizes of airborne CPR (dlat = 1.5° even, 90/59° odd)
+    private func resolveGlobalSurfaceCPR(even: CPRFrame?, odd: CPRFrame?) -> CLLocationCoordinate2D? {
+        guard let even, let odd else { return nil }
+        guard abs(even.timestamp.timeIntervalSince(odd.timestamp)) <= 10 else { return nil }
+
+        let evenLat = Double(even.latitude) / 131072.0
+        let oddLat = Double(odd.latitude) / 131072.0
+        let j = floor(59.0 * evenLat - 60.0 * oddLat + 0.5)
+        var latitudeEven = 1.5 * (mod(j, 60.0) + evenLat)
+        var latitudeOdd = (90.0 / 59.0) * (mod(j, 59.0) + oddLat)
+
+        if latitudeEven >= 270 { latitudeEven -= 360 }
+        if latitudeOdd >= 270 { latitudeOdd -= 360 }
+        guard cprNL(latitudeEven) == cprNL(latitudeOdd) else { return nil }
+
+        let useEven = even.timestamp > odd.timestamp
+        let latitude = useEven ? latitudeEven : latitudeOdd
+        let ni = max(useEven ? cprNL(latitude) : cprNL(latitude) - 1, 1)
+        let longitudeZone = Double(ni)
+        let m = floor(
+            (Double(even.longitude) * Double(cprNL(latitude) - 1) - Double(odd.longitude) * Double(cprNL(latitude))) / 131072.0 + 0.5
+        )
+        let longitude = (90.0 / longitudeZone) * (mod(m, longitudeZone) + Double(useEven ? even.longitude : odd.longitude) / 131072.0)
+        let normalizedLongitude = longitude > 180 ? longitude - 360 : longitude
+        return CLLocationCoordinate2D(latitude: latitude, longitude: normalizedLongitude)
+    }
+
+    // MARK: - CPR NL lookup table
 
     private func cprNL(_ latitude: Double) -> Int {
         let lat = abs(latitude)
@@ -352,6 +535,8 @@ final class BeastDecoder {
         default: return 1
         }
     }
+
+    // MARK: - Bit helpers
 
     private func bits(from bytes: ArraySlice<UInt8>) -> [UInt8] {
         bytes.flatMap { byte in (0..<8).map { UInt8((byte >> (7 - $0)) & 1) } }

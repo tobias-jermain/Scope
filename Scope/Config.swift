@@ -1,5 +1,26 @@
 import Foundation
 
+enum ReceiverLocationMode: String, Codable, CaseIterable, Identifiable {
+    case local
+    case remote
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .local: return "Local"
+        case .remote: return "Remote"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .local: return "Local receiver support is not available yet"
+        case .remote: return "Connect to an ADS-B receiver on your network"
+        }
+    }
+}
+
 enum DataSourceMode: String, Codable, CaseIterable, Identifiable {
     case beastBinary
     case httpJSON
@@ -22,6 +43,7 @@ enum DataSourceMode: String, Codable, CaseIterable, Identifiable {
 }
 
 struct Config: Codable {
+    var receiverLocationMode: ReceiverLocationMode = .remote
     var dataSourceMode: DataSourceMode = .beastBinary
     var beastHost: String = "192.168.1.146"
     var beastPort: UInt16 = 30002
@@ -37,6 +59,7 @@ struct Config: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let fallback = Config()
+        receiverLocationMode = try container.decodeIfPresent(ReceiverLocationMode.self, forKey: .receiverLocationMode) ?? fallback.receiverLocationMode
         dataSourceMode = try container.decodeIfPresent(DataSourceMode.self, forKey: .dataSourceMode) ?? fallback.dataSourceMode
         beastHost = try container.decodeIfPresent(String.self, forKey: .beastHost) ?? fallback.beastHost
         beastPort = try container.decodeIfPresent(UInt16.self, forKey: .beastPort) ?? fallback.beastPort
@@ -49,11 +72,16 @@ struct Config: Codable {
     }
 
     var activeEndpointDescription: String {
-        switch dataSourceMode {
-        case .beastBinary:
-            return "\(beastHost):\(beastPort)"
-        case .httpJSON:
-            return httpEndpoint
+        switch receiverLocationMode {
+        case .local:
+            return "Local receiver"
+        case .remote:
+            switch dataSourceMode {
+            case .beastBinary:
+                return "\(beastHost):\(beastPort)"
+            case .httpJSON:
+                return httpEndpoint
+            }
         }
     }
 

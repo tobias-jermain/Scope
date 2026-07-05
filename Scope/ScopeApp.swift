@@ -9,10 +9,14 @@ struct ScopeApp: App {
         .defaultSize(width: 1400, height: 900)
         .windowResizability(.contentMinSize)
         .commands {
+            ScopeCommands()
             CommandGroup(replacing: .help) {}
-            CommandGroup(replacing: .appInfo) {
-                Button("About Scope") {}
-            }
         }
+
+        #if os(macOS)
+        Settings {
+            ScopeSettingsView()
+        }
+        #endif
     }
 }

@@ -6,6 +6,7 @@ struct AircraftMetadata: Sendable {
     let aircraftType: String?
     let description: String?
     let airline: String?
+    let manufacturer: String?
     let photoUrl: String?
     let fetchedAt: Date
 
